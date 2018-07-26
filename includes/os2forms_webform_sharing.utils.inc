@@ -11,7 +11,7 @@ function os2forms_webform_sharing_repo_insert_update_user($user) {
     $fields['uuid'] = $user->uuid;
     $fields['uid'] = $user->uid;
     $fields['name'] = $user->name;
-    if ($user->mail) {
+    if (isset($user->mail)) {
       $fields['mail'] = $user->mail;
     }
 
