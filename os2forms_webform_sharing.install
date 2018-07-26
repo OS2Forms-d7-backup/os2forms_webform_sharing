@@ -89,7 +89,6 @@ function os2forms_webform_sharing_schema() {
  * Sets the node_export variables that are needed for module to work correctly.
  */
 function os2forms_webform_sharing_enable() {
-  dpm('os2forms_webform_sharing_enable');
   variable_set('node_export_existing', 'revision');
   variable_set('node_export_reset_created_webform', 0);
   variable_set('node_export_reset_changed_webform', 0);
