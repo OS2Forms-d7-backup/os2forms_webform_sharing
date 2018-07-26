@@ -352,7 +352,7 @@ function os2forms_webform_sharing_reset_form($form, &$form_state, $webform_uuid 
  */
 function os2forms_webform_sharing_page_settings($form, &$form_state) {
   // Attempt the webservice request.
-  if (os2forms_webform_sharing_get_webform_node_export()) {
+  if (os2forms_webform_sharing_get_webform_node_export() !== NULL) {
     drupal_set_message(t('Sharing repository set up correctly'));
   }
   else {
