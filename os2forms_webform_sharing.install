@@ -1,0 +1,97 @@
+<?php
+
+module_load_include('install', 'uuid', 'uuid');
+
+/**
+ * Implements hook_schema().
+ */
+function os2forms_webform_sharing_schema() {
+  $schema['os2forms_webform_sharing_repo_webforms'] = array(
+    'description' => t('Table to store cached data fetched from attached OS2Forms webform repo'),
+    'fields' => array(
+      'uuid' => uuid_schema_field_definition(),
+      'title' => array(
+        'description' => t('Title of the webform'),
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'rnid' => array(
+        'description' => 'The primary identifier for a node on a remote server',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'ruid' => array(
+        'description' => t('User ID of the form author on a remote server'),
+        'type' => 'int',
+        'unsigned' => TRUE,
+      ),
+      'readonly' => array(
+        'description' => 'Shows webform is readonly, 0 - no, 1 - yes.',
+        'type' => 'int',
+        'size' => 'tiny',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'changed' => array(
+        'description' => 'The Unix timestamp when the node was most recently saved.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'lnid' => array(
+        'description' => 'The primary identifier for a node on a local server',
+        'type' => 'int',
+        'unsigned' => TRUE,
+      ),
+    ),
+    'primary key' => array('uuid'),
+  );
+
+  $schema['os2forms_webform_sharing_repo_users'] = array(
+    'description' => t('Table to store remote users information.'),
+    'fields' => array(
+      'uuid' => uuid_schema_field_definition(),
+      'uid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'Primary Key: Unique user ID.',
+        'default' => 0,
+      ),
+      'name' => array(
+        'type' => 'varchar',
+        'length' => 60,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'Unique user name.',
+      ),
+      'mail' => array(
+        'type' => 'varchar',
+        'length' => 254,
+        'not null' => FALSE,
+        'default' => '',
+        'description' => "User's e-mail address.",
+      ),
+    ),
+    'primary key' => array('uuid'),
+  );
+
+  return $schema;
+}
+
+/**
+ * Implements hook_enable().
+ *
+ * Sets the node_export variables that are needed for module to work correctly.
+ */
+function os2forms_webform_sharing_enable() {
+  dpm('os2forms_webform_sharing_enable');
+  variable_set('node_export_existing', 'revision');
+  variable_set('node_export_reset_created_webform', 0);
+  variable_set('node_export_reset_changed_webform', 0);
+  variable_set('node_export_reset_revision_timestamp_webform', 0);
+}

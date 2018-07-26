@@ -1,0 +1,219 @@
+<?php
+
+define("OS2FORMS_WEBFORM_SHARING_MAX_SUBSEQ_WS_REQUESTS", 10);
+
+module_load_include('inc', 'os2forms_webform_sharing', 'includes/os2forms_webform_sharing.webservice');
+module_load_include('inc', 'os2forms_webform_sharing', 'includes/os2forms_webform_sharing.utils');
+module_load_include('inc', 'os2forms_webform_sharing', 'includes/os2forms_webform_sharing.pages');
+module_load_include('inc', 'os2forms_webform_sharing', 'includes/os2forms_webform_sharing.batch');
+
+/**
+ * Implements hook_menu().
+ */
+function os2forms_webform_sharing_menu() {
+  $items['admin/config/content/os2forms-repository'] = array(
+    'title' => 'OS2Forms webform sharing',
+    'description' => t('OS2Forms webform sharing functionality and settings'),
+    'type' => MENU_NORMAL_ITEM,
+    'access arguments' => array('create webform content'),
+    'page callback' => 'os2forms_webform_sharing_list_shared',
+  );
+
+  $items['admin/config/content/os2forms-repository/shared'] = array(
+    'title' => 'Shared webforms',
+    'description' => t('OS2Forms webforms sharing - shared webform'),
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'access arguments' => array('create webform content'),
+    'page callback' => 'os2forms_webform_sharing_list_shared',
+    'weight' => 1,
+  );
+
+  $items['admin/config/content/os2forms-repository/local'] = array(
+    'title' => 'Local webforms',
+    'description' => t('OS2Forms webforms sharing - local webform'),
+    'type' => MENU_LOCAL_TASK,
+    'access arguments' => array('create webform content'),
+    'page callback' => 'os2forms_webform_sharing_list_local',
+    'weight' => 2,
+  );
+
+  $items['admin/config/content/os2forms-repository/setting'] = array(
+    'title' => 'Settings',
+    'description' => t('OS2Forms webforms sharing - settings'),
+    'type' => MENU_LOCAL_TASK,
+    'access arguments' => array('access administration pages'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('os2forms_webform_sharing_page_settings'),
+    'weight' => 3,
+  );
+
+  $items['admin/config/content/os2forms-repository/%/clone'] = array(
+    'title' => 'OS2Forms repository',
+    'type' => MENU_CALLBACK,
+    'access arguments' => array('use PHP to import nodes'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('os2forms_webform_sharing_clone_form', 4),
+  );
+
+  $items['admin/config/content/os2forms-repository/%/commit'] = array(
+    'title' => 'OS2Forms repository',
+    'type' => MENU_CALLBACK,
+    'access arguments' => array('export nodes'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('os2forms_webform_sharing_commit_form', 4),
+  );
+
+  $items['admin/config/content/os2forms-repository/%/unlink'] = array(
+    'title' => 'OS2Forms repository',
+    'type' => MENU_CALLBACK,
+    'access arguments' => array('edit any webform content'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('os2forms_webform_sharing_unlink_form', 4),
+  );
+
+  $items['admin/config/content/os2forms-repository/%/update'] = array(
+    'title' => 'OS2Forms repository',
+    'type' => MENU_CALLBACK,
+    'access arguments' => array('use PHP to import nodes'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('os2forms_webform_sharing_update_form', 4),
+  );
+
+  $items['admin/config/content/os2forms-repository/%/reset'] = array(
+    'title' => 'OS2Forms repository',
+    'type' => MENU_CALLBACK,
+    'access arguments' => array('use PHP to import nodes'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('os2forms_webform_sharing_reset_form', 4),
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_cron().
+ */
+function os2forms_webform_sharing_cron() {
+  os2forms_webform_sharing_repo_clear_users();
+  os2forms_webform_sharing_fetch_users();
+  os2forms_webform_sharing_repo_clear_webforms();
+  os2forms_webform_sharing_fetch_webforms();
+  os2forms_webform_sharing_reset_readonly_webforms();
+  variable_set('os2forms_webform_sharing_last_synch', time());
+}
+
+/**
+ * Fetches the webforms from the remote server and updates the local information about it.
+ */
+function os2forms_webform_sharing_fetch_webforms() {
+  $webforms = array();
+
+  // Allowing to get limited number of nodes. Limit = OS2FORMS_WEBFORM_SHARING_MAX_SUBSEQ_WS_REQUESTS * pageSize (default to 20).
+  for ($i = 0; $i < OS2FORMS_WEBFORM_SHARING_MAX_SUBSEQ_WS_REQUESTS; $i++) {
+    $currentPageWebforms = os2forms_webform_sharing_get_webform_node_export($i);
+
+    // If this page returned no results, no need to proceed further.
+    if (empty($currentPageWebforms)) {
+      break;
+    }
+
+    $webforms = array_merge($webforms, $currentPageWebforms);
+  }
+
+  foreach ($webforms as $webform) {
+    os2forms_webform_sharing_repo_insert_update_webform($webform);
+
+    // Check if we already have a local version.
+    if ($localWebform = os2forms_webform_sharing_load_webform($webform->uuid)) {
+      os2forms_webform_sharing_repo_map_webform($webform->uuid, $localWebform->nid);
+    }
+  }
+}
+
+/**
+ * Finds the readonly cloned webform and resets them if the changed value if different.
+ * Actual reset/cloning if done by other function.
+ * @see os2forms_webform_sharing_batch_clone.
+ */
+function os2forms_webform_sharing_reset_readonly_webforms() {
+  $readonlyWebforms = os2forms_webform_sharing_repo_load_webforms(array(), array('readonly' => 1));
+
+  if (!empty($readonlyWebforms) && is_array($readonlyWebforms)) {
+    $uuids = array();
+    foreach ($readonlyWebforms as $readonlyWebform) {
+      $localWebform = os2forms_webform_sharing_load_webform($readonlyWebform->uuid);
+
+      // Only force cloning if local version exists and changed value is different.
+      if ($localWebform && $readonlyWebform->changed !== $localWebform->changed) {
+        $uuids[] = $readonlyWebform->uuid;
+      }
+    }
+
+    // Using batch to do the heavy operations.
+    $batch = os2forms_webform_sharing_batch_clone($uuids);
+    batch_set($batch);
+    if (drupal_is_cli() && function_exists('drush_main')) {
+      drush_backend_batch_process();
+    }
+    else {
+      batch_process(current_path());
+    }
+  }
+}
+
+/**
+ * Fetches the users fromt he remote server and update the local information about it.
+ */
+function os2forms_webform_sharing_fetch_users() {
+  $users = array();
+
+  // Allowing to get limited number of nodes. Limit = OS2FORMS_WEBFORM_SHARING_MAX_SUBSEQ_WS_REQUESTS * pageSize (default to 20).
+  for ($i = 0; $i < OS2FORMS_WEBFORM_SHARING_MAX_SUBSEQ_WS_REQUESTS; $i++) {
+    $currentPageUsers = os2forms_webform_sharing_get_user($i);
+
+    // If this page returned no results, no need to proceed further.
+    if (empty($currentPageUsers)) {
+      break;
+    }
+
+    $users = array_merge($users, $currentPageUsers);
+  }
+
+  foreach ($users as $user) {
+    os2forms_webform_sharing_repo_insert_update_user($user);
+  }
+}
+
+/**
+ * Implements node_delete().
+ * Removes mapping between remote webform and the local node.
+ */
+function os2forms_webform_sharing_node_delete($node) {
+  db_update('os2forms_webform_sharing_repo_webforms')
+    ->fields(array('lnid' => NULL))
+    ->condition('uuid', $node->uuid)
+    ->execute();
+}
+
+/**
+ * Implements hook_form_alter().
+ * Gives a warning on webform related forms, if the form is readonly.
+ */
+function os2forms_webform_sharing_form_alter(&$form, &$form_state, $form_id) {
+  switch ($form_id) {
+    case 'webform_node_form':
+    case 'webform_components_form':
+    case 'webform_conditionals_form':
+    case 'webform_emails_form':
+    case 'webform_configure_form':
+      if (isset($form_state['node']->uuid)) {
+        $uuid = $form_state['node']->uuid;
+        $repoWebform = os2forms_webform_sharing_repo_load_webform($uuid);
+
+        if ($repoWebform->readonly) {
+          drupal_set_message(t('This webform was cloned from repository and is read only. Do not modify it. All your changes will be reverted on next synch.'), 'warning');
+          drupal_set_message(t('All your changes will be reverted on next synch.'), 'warning');
+        }
+      }
+  }
+}

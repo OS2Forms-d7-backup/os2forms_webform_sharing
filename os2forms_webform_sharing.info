@@ -1,0 +1,11 @@
+name = Webform sharing
+description = Provides funtionality for sharing webforms
+package = OS2Forms Webform sharing
+#dependencies[] = services
+dependencies[] = webform
+#dependencies[] = ctools
+dependencies[] = uuid
+dependencies[] = node_export
+
+version = "7.x-1.0"
+core = "7.x"
