@@ -44,7 +44,7 @@ function os2forms_webform_sharing_batch_clone_op($uuid, $operation_details, &$co
   // Load webform basic data we are about to clone.
   $webform = os2forms_webform_sharing_repo_load_webform($uuid);
 
-  // Load localwebform (if we have one already.
+  // Load localwebform (if we have one already).
   $originalLocalWebform = os2forms_webform_sharing_load_webform($uuid);
 
   // Report progress.
@@ -53,29 +53,47 @@ function os2forms_webform_sharing_batch_clone_op($uuid, $operation_details, &$co
   // Actual webservice call.
   $data = os2forms_webform_sharing_get_webform_node_export_by_uuid($uuid);
 
-  // Prepare and create a new node.
-  $import = node_export_import($data);
-  if ($import['success']) {
-    // We expect only one node to be imported.
-    $nid = reset($import['nids']);
+  // We got the node export data.
+  if (strpos($data, 'node_export_serialize') === 0) {
+    // Prepare and create a new node.
+    $import = node_export_import($data);
+    if ($import['success']) {
+      // We expect only one node to be imported.
+      $nid = reset($import['nids']);
 
-    // Keep the original author, if present.
-    if ($originalLocalWebform) {
-      $localWebform = node_load($nid);
-      $localWebform->uid = $originalLocalWebform->uid;
+      // Keep the original author, if present.
+      if ($originalLocalWebform) {
+        $localWebform = node_load($nid);
+        $localWebform->uid = $originalLocalWebform->uid;
 
-      // Saving the node without updating changed timestamp.
-      node_export_save($localWebform);
+        // Saving the node without updating changed timestamp.
+        node_export_save($localWebform);
+      }
+
+      $context['results'][] = array(
+        'message' => t('Webform "@title" imported into <a href="@link">@title</a>.', array(
+          '@title' => $webform->title,
+          '@link' => url('node/' . $nid)
+        )),
+        'type' => 'status'
+      );
+
+      $webform->nid = $nid;
+      os2forms_webform_sharing_repo_map_webform($uuid, $nid);
     }
-
-    $context['results'][] = t('@title imported into <a href="@link">@title</a>', array(
-      '@title' => $webform->title,
-      '@link' => url('node/' . $nid)
-    ));
-
-    $webform->nid = $nid;
-    os2forms_webform_sharing_repo_map_webform($uuid, $nid);
   }
+  else {
+    // Report the problem.
+    $context['results'][] = array(
+      'message' => t('Webform "@title" import failed. Message: @message', array(
+        '@title' => $webform->title,
+        '@message' => $data,
+      )),
+      'type' => 'warning'
+    );
+  }
+
+
 }
 
 /**
@@ -87,9 +105,21 @@ function os2forms_webform_sharing_batch_clone_op($uuid, $operation_details, &$co
  */
 function os2forms_webform_sharing_batch_clone_finished($success, $results, $operations) {
   if ($success) {
-    drupal_set_message(t('@count node(s) have been cloned.', array('@count' => count($results))));
+    // Counting successful.
+    $successCount = 0;
     foreach ($results as $result) {
-      drupal_set_message($result);
+      if ($result['type'] === 'status') {
+        $successCount++;
+      }
+    }
+
+    drupal_set_message(t('@successCount out of @totalCount node(s) have been cloned.', array(
+      '@successCount' => $successCount,
+      '@totalCount' => count($results)
+    )));
+
+    foreach ($results as $result) {
+      drupal_set_message($result['message'], $result['type']);
     }
   }
   else {
@@ -97,7 +127,9 @@ function os2forms_webform_sharing_batch_clone_finished($success, $results, $oper
     // $operations contains the operations that remained unprocessed.
     $error_operation = reset($operations);
     drupal_set_message(
-      t('An error occurred while processing @operation with arguments : @args',
+      t('An error occurred while processing {
+      @operation
+} with arguments : @args',
         array(
           '@operation' => $error_operation[0],
           '@args' => print_r($error_operation[0], TRUE),
@@ -116,7 +148,7 @@ function os2forms_webform_sharing_batch_clone_finished($success, $results, $oper
  * @return array
  */
 function os2forms_webform_sharing_batch_commit($uuids) {
-  drupal_set_message(t('Preparing to commit @num node(s).', array('@num' => count($uuids))));
+  drupal_set_message(t('Preparing to commit @num node(s) . ', array('@num' => count($uuids))));
 
   $operations = array();
   for ($i = 0; $i < count($uuids); $i++) {
@@ -131,9 +163,9 @@ function os2forms_webform_sharing_batch_commit($uuids) {
   $batch = array(
     'operations' => $operations,
     'title' => t('Processing commit'),
-    'init_message' => t('Commit is starting.'),
-    'progress_message' => t('Processed @current out of @total.'),
-    'error_message' => t('Commit has encountered an error.'),
+    'init_message' => t('Commit is starting . '),
+    'progress_message' => t('Processed @current out of @total . '),
+    'error_message' => t('Commit has encountered an error . '),
     'finished' => 'os2forms_webform_sharing_batch_commit_finished',
   );
 
@@ -153,7 +185,7 @@ function os2forms_webform_sharing_batch_commit_op($uuid, $operation_details, &$c
   $webform = os2forms_webform_sharing_load_webform($uuid);
 
   // Report progress.
-  $context['message'] = t('Committing node %title', array('%title' => $webform->title));
+  $context['message'] = t('Committing node @title', array('@title' => $webform->title));
 
   // Exporting with serialize formatter.
   $export = node_export(intval($webform->nid), 'serialize');
@@ -164,13 +196,26 @@ function os2forms_webform_sharing_batch_commit_op($uuid, $operation_details, &$c
     // Actual webservice call.
     $result = os2forms_webform_sharing_post_webform_node_export($data);
 
+    // Operation was successful.
     if ($result->nid) {
       os2forms_webform_sharing_repo_insert_update_webform($result);
       os2forms_webform_sharing_repo_map_webform($result->uuid, $webform->nid);
-      $context['results'][] = t('@title is successfully committed imported, and its remote nid is @rnid', array(
-        '@title' => $webform->title,
-        '@rnid' => $result->nid
-      ));
+      $context['results'][] = array(
+        'message' => t('Webform "@title" is successfully committed, and its remote nid is @rnid', array(
+          '@title' => $webform->title,
+          '@rnid' => $result->nid
+        )),
+        'type' => 'status'
+      );
+    }
+    else {
+      $context['results'][] = array(
+        'message' => t('Webform "@title" commit failed, message: @message', array(
+          '@title' => $webform->title,
+          '@message' => implode(' ', $result)
+        )),
+        'type' => 'warning'
+      );
     }
   }
 }
@@ -184,9 +229,21 @@ function os2forms_webform_sharing_batch_commit_op($uuid, $operation_details, &$c
  */
 function os2forms_webform_sharing_batch_commit_finished($success, $results, $operations) {
   if ($success) {
-    drupal_set_message(t('@count node(s) have been committed.', array('@count' => count($results))));
+    // Counting successful.
+    $successCount = 0;
     foreach ($results as $result) {
-      drupal_set_message($result);
+      if ($result['type'] === 'status') {
+        $successCount++;
+      }
+    }
+
+    drupal_set_message(t('@successCount out of @totalCount node(s) have been committed.', array(
+      '@successCount' => $successCount,
+      '@totalCount' => count($results)
+    )));
+
+    foreach ($results as $result) {
+      drupal_set_message($result['message'], $result['type']);
     }
   }
   else {
@@ -194,7 +251,9 @@ function os2forms_webform_sharing_batch_commit_finished($success, $results, $ope
     // $operations contains the operations that remained unprocessed.
     $error_operation = reset($operations);
     drupal_set_message(
-      t('An error occurred while processing @operation with arguments : @args',
+      t('An error occurred while processing {
+      @operation
+} with arguments : @args',
         array(
           '@operation' => $error_operation[0],
           '@args' => print_r($error_operation[0], TRUE),
@@ -213,7 +272,7 @@ function os2forms_webform_sharing_batch_commit_finished($success, $results, $ope
  * @return array
  */
 function os2forms_webform_sharing_batch_unlink($uuids) {
-  drupal_set_message(t('Preparing to unlink @num node(s).', array('@num' => count($uuids))));
+  drupal_set_message(t('Preparing to unlink @num node(s) . ', array('@num' => count($uuids))));
 
   $operations = array();
   for ($i = 0; $i < count($uuids); $i++) {
@@ -228,9 +287,9 @@ function os2forms_webform_sharing_batch_unlink($uuids) {
   $batch = array(
     'operations' => $operations,
     'title' => t('Processing unlinking'),
-    'init_message' => t('Unlinking is starting.'),
-    'progress_message' => t('Processed @current out of @total.'),
-    'error_message' => t('Unlinking has encountered an error.'),
+    'init_message' => t('Unlinking is starting . '),
+    'progress_message' => t('Processed @current out of @total . '),
+    'error_message' => t('Unlinking has encountered an error . '),
     'finished' => 'os2forms_webform_sharing_batch_unlink_finished',
   );
 
@@ -251,7 +310,7 @@ function os2forms_webform_sharing_batch_unlink_op($uuid, $operation_details, &$c
   $originalUuid = $webform->uuid;
 
   // Report progress.
-  $context['message'] = t('Unlinking node %title', array('%title' => $webform->title));
+  $context['message'] = t('Unlinking node % title', array(' % title' => $webform->title));
 
   // Unsetting uuid and saving node, saving node will automatically generate new uuid.
   unset($webform->uuid);
@@ -259,9 +318,9 @@ function os2forms_webform_sharing_batch_unlink_op($uuid, $operation_details, &$c
 
   if ($webform->uuid !== $originalUuid) {
     // Remove connection from remote form to a current nid.
-    os2forms_webform_sharing_repo_map_webform($originalUuid, null);
+    os2forms_webform_sharing_repo_map_webform($originalUuid, NULL);
 
-    $context['results'][] = t('@title is successfully unlinked.', array(
+    $context['results'][] = t('@title is successfully unlinked . ', array(
       '@title' => $webform->title
     ));
   }
@@ -276,7 +335,7 @@ function os2forms_webform_sharing_batch_unlink_op($uuid, $operation_details, &$c
  */
 function os2forms_webform_sharing_batch_unlink_finished($success, $results, $operations) {
   if ($success) {
-    drupal_set_message(t('@count node(s) have been unlinked.', array('@count' => count($results))));
+    drupal_set_message(t('@count node(s) have been unlinked . ', array('@count' => count($results))));
     foreach ($results as $result) {
       drupal_set_message($result);
     }
@@ -286,7 +345,9 @@ function os2forms_webform_sharing_batch_unlink_finished($success, $results, $ope
     // $operations contains the operations that remained unprocessed.
     $error_operation = reset($operations);
     drupal_set_message(
-      t('An error occurred while processing @operation with arguments : @args',
+      t('An error occurred while processing {
+      @operation
+} with arguments : @args',
         array(
           '@operation' => $error_operation[0],
           '@args' => print_r($error_operation[0], TRUE),
